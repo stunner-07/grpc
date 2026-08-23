@@ -2902,8 +2902,6 @@ grpc_cc_library(
     visibility = ["//visibility:public"],
 )
 
-
-
 grpc_cc_library(
     name = "grpc++_reflection",
     srcs = [
@@ -3010,7 +3008,6 @@ grpc_cc_library(
     ],
     alwayslink = 1,
 )
-
 
 grpc_cc_library(
     name = "grpcpp_channelz",
