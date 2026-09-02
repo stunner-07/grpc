@@ -195,20 +195,6 @@ FileWatcherCertificateProvider::FileWatcherCertificateProvider(
       distributor_->SetKeyMaterials(cert_name, roots.ok() ? *roots : nullptr,
                                     pem_key_cert_pairs);
     }
-    grpc_error_handle root_cert_error;
-    grpc_error_handle identity_cert_error;
-    if (root_being_watched && (!roots.ok() || *roots == nullptr)) {
-      root_cert_error =
-          GRPC_ERROR_CREATE("Unable to get latest root certificates.");
-    }
-    if (identity_being_watched && !pem_key_cert_pairs.has_value()) {
-      identity_cert_error =
-          GRPC_ERROR_CREATE("Unable to get latest identity certificates.");
-    }
-    if (!root_cert_error.ok() || !identity_cert_error.ok()) {
-      distributor_->SetErrorForCert(cert_name, root_cert_error,
-                                    identity_cert_error);
-    }
   });
 }
 
@@ -327,8 +313,7 @@ std::optional<std::string>
 FileWatcherCertificateProvider::ReadRootCertificatesFromFile(
     const std::string& root_cert_full_path) {
   // Read the root file.
-  auto root_slice =
-      LoadFile(root_cert_full_path, /*add_null_terminator=*/false);
+  auto root_slice = LoadFile(root_cert_full_path);
   if (!root_slice.ok()) {
     LOG(ERROR) << "Reading file " << root_cert_full_path
                << " failed: " << root_slice.status();
@@ -372,14 +357,13 @@ FileWatcherCertificateProvider::ReadIdentityKeyCertPairFromFiles(
       continue;
     }
     // Read the identity files.
-    auto key_slice = LoadFile(private_key_path, /*add_null_terminator=*/false);
+    auto key_slice = LoadFile(private_key_path);
     if (!key_slice.ok()) {
       LOG(ERROR) << "Reading file " << private_key_path
                  << " failed: " << key_slice.status() << ". Start retrying...";
       continue;
     }
-    auto cert_slice =
-        LoadFile(identity_certificate_path, /*add_null_terminator=*/false);
+    auto cert_slice = LoadFile(identity_certificate_path);
     if (!cert_slice.ok()) {
       LOG(ERROR) << "Reading file " << identity_certificate_path
                  << " failed: " << cert_slice.status() << ". Start retrying...";
@@ -442,20 +426,6 @@ InMemoryCertificateProvider::InMemoryCertificateProvider()
     if (roots != nullptr || key_cert_pairs_or_selector.has_value()) {
       distributor_->SetKeyMaterials(cert_name, roots,
                                     key_cert_pairs_or_selector);
-    }
-    grpc_error_handle root_cert_error;
-    grpc_error_handle identity_cert_error;
-    if (root_being_watched && roots == nullptr) {
-      root_cert_error =
-          GRPC_ERROR_CREATE("Unable to get latest root certificates.");
-    }
-    if (identity_being_watched && !key_cert_pairs_or_selector.has_value()) {
-      identity_cert_error =
-          GRPC_ERROR_CREATE("Unable to get latest identity certificates.");
-    }
-    if (!root_cert_error.ok() || !identity_cert_error.ok()) {
-      distributor_->SetErrorForCert(cert_name, root_cert_error,
-                                    identity_cert_error);
     }
   });
 }

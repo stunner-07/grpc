@@ -49,7 +49,9 @@
 #include <grpc/support/thd_id.h>
 #include <openssl/bio.h>
 #include <openssl/crypto.h>  // For OPENSSL_free
+#if !defined(OPENSSL_NO_ENGINE)
 #include <openssl/engine.h>
+#endif
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 #include <openssl/tls1.h>
@@ -129,7 +131,7 @@ using SelectCertificateResult =
 using AsyncCertificateSelectionHandle =
     grpc_core::CertificateSelector::AsyncCertificateSelectionHandle;
 #endif
-using tsi::PrivateKey;
+using grpc_core::PrivateKey;
 using tsi::RootCertInfo;
 
 // --- Structure definitions. ---
@@ -1021,9 +1023,7 @@ static int looks_like_ip_address(absl::string_view name) {
 static tsi_result ssl_get_x509_common_name(X509* cert, unsigned char** utf8,
                                            size_t* utf8_size) {
   int common_name_index = -1;
-  X509_NAME_ENTRY* common_name_entry = nullptr;
-  ASN1_STRING* common_name_asn1 = nullptr;
-  X509_NAME* subject_name = X509_get_subject_name(cert);
+  auto* subject_name = X509_get_subject_name(cert);
   int utf8_returned_size = 0;
   if (subject_name == nullptr) {
     VLOG(2) << "Could not get subject name from certificate.";
@@ -1035,12 +1035,13 @@ static tsi_result ssl_get_x509_common_name(X509* cert, unsigned char** utf8,
     VLOG(2) << "Could not get common name of subject from certificate.";
     return TSI_NOT_FOUND;
   }
-  common_name_entry = X509_NAME_get_entry(subject_name, common_name_index);
+  auto* common_name_entry =
+      X509_NAME_get_entry(subject_name, common_name_index);
   if (common_name_entry == nullptr) {
     LOG(ERROR) << "Could not get common name entry from certificate.";
     return TSI_INTERNAL_ERROR;
   }
-  common_name_asn1 = X509_NAME_ENTRY_get_data(common_name_entry);
+  auto* common_name_asn1 = X509_NAME_ENTRY_get_data(common_name_entry);
   if (common_name_asn1 == nullptr) {
     LOG(ERROR) << "Could not get common name entry asn1 from certificate.";
     return TSI_INTERNAL_ERROR;
@@ -1081,7 +1082,7 @@ static tsi_result peer_property_from_x509_common_name(
 static tsi_result peer_property_from_x509_subject(X509* cert,
                                                   tsi_peer_property* property,
                                                   bool is_verified_root_cert) {
-  X509_NAME* subject_name = X509_get_subject_name(cert);
+  auto* subject_name = X509_get_subject_name(cert);
   if (subject_name == nullptr) {
     GRPC_TRACE_LOG(tsi, INFO) << "Could not get subject name from certificate.";
     return TSI_NOT_FOUND;
@@ -1177,17 +1178,30 @@ static tsi_result add_subject_alt_names_properties_to_peer(
       char ntop_buf[INET6_ADDRSTRLEN];
       int af;
 
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+      if (ASN1_STRING_length(subject_alt_name->d.iPAddress) == 4) {
+        af = AF_INET;
+      } else if (ASN1_STRING_length(subject_alt_name->d.iPAddress) == 16) {
+        af = AF_INET6;
+#else
       if (subject_alt_name->d.iPAddress->length == 4) {
         af = AF_INET;
       } else if (subject_alt_name->d.iPAddress->length == 16) {
         af = AF_INET6;
+#endif
       } else {
         LOG(ERROR) << "SAN IP Address contained invalid IP";
         result = TSI_INTERNAL_ERROR;
         break;
       }
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+      const char* name =
+          inet_ntop(af, ASN1_STRING_get0_data(subject_alt_name->d.iPAddress),
+                    ntop_buf, INET6_ADDRSTRLEN);
+#else
       const char* name = inet_ntop(af, subject_alt_name->d.iPAddress->data,
                                    ntop_buf, INET6_ADDRSTRLEN);
+#endif
       if (name == nullptr) {
         LOG(ERROR) << "Could not get IP string from asn1 octet.";
         result = TSI_INTERNAL_ERROR;
@@ -1472,13 +1486,13 @@ static tsi_result x509_store_load_certs(X509_STORE* cert_store,
       break;  // We're at the end of stream.
     }
     if (root_names != nullptr) {
-      root_name = X509_get_subject_name(root);
-      if (root_name == nullptr) {
+      auto* root_subject = X509_get_subject_name(root);
+      if (root_subject == nullptr) {
         LOG(ERROR) << "Could not get name from root certificate.";
         result = TSI_INVALID_ARGUMENT;
         break;
       }
-      root_name = X509_NAME_dup(root_name);
+      root_name = X509_NAME_dup(const_cast<X509_NAME*>(root_subject));
       if (root_name == nullptr) {
         result = TSI_OUT_OF_RESOURCES;
         break;
@@ -1531,22 +1545,22 @@ static tsi_result ssl_ctx_load_verification_certs(SSL_CTX* context,
 // Populates the SSL context with a private key and a cert chain, and sets the
 // cipher list and the ephemeral ECDH key.
 static tsi_result populate_ssl_context(
-    SSL_CTX* context, const tsi_ssl_pem_key_cert_pair* key_cert_pair,
+    SSL_CTX* context, const grpc_core::PemKeyCertPair* key_cert_pair,
     const char* cipher_list,
     const std::vector<grpc_tls_key_exchange_group>& key_exchange_groups) {
   tsi_result result = TSI_OK;
   if (key_cert_pair != nullptr) {
-    if (!key_cert_pair->cert_chain.empty()) {
+    if (!key_cert_pair->cert_chain().empty()) {
       result = ssl_ctx_use_certificate_chain(
-          context, key_cert_pair->cert_chain.c_str(),
-          key_cert_pair->cert_chain.length());
+          context, key_cert_pair->cert_chain().c_str(),
+          key_cert_pair->cert_chain().length());
       if (result != TSI_OK) {
         LOG(ERROR) << "Invalid cert chain file.";
         return result;
       }
     }
     result = grpc_core::Match(
-        key_cert_pair->private_key,
+        key_cert_pair->private_key(),
         [&](const std::string& pem_root_certs) {
           tsi_result result = TSI_OK;
           result = ssl_ctx_use_private_key(context, pem_root_certs.data(),
@@ -2066,8 +2080,8 @@ static tsi_result tsi_set_min_and_max_tls_versions(
 // --- tsi_ssl_root_certs_store methods implementation. ---
 
 tsi_ssl_root_certs_store* tsi_ssl_root_certs_store_create(
-    const char* pem_roots) {
-  if (pem_roots == nullptr) {
+    absl::string_view pem_roots) {
+  if (pem_roots.empty()) {
     LOG(ERROR) << "The root certificates are empty.";
     return nullptr;
   }
@@ -2083,8 +2097,8 @@ tsi_ssl_root_certs_store* tsi_ssl_root_certs_store_create(
     gpr_free(root_store);
     return nullptr;
   }
-  tsi_result result = x509_store_load_certs(root_store->store, pem_roots,
-                                            strlen(pem_roots), nullptr);
+  tsi_result result = x509_store_load_certs(root_store->store, pem_roots.data(),
+                                            pem_roots.size(), nullptr);
   if (result != TSI_OK) {
     LOG(ERROR) << "Could not load root certificates.";
     X509_STORE_free(root_store->store);
@@ -3258,7 +3272,7 @@ static tsi_ssl_handshaker_factory_vtable client_handshaker_factory_vtable = {
     tsi_ssl_client_handshaker_factory_destroy};
 
 tsi_result tsi_create_ssl_client_handshaker_factory(
-    const tsi_ssl_pem_key_cert_pair* pem_key_cert_pair,
+    const grpc_core::PemKeyCertPair* pem_key_cert_pair,
     const char* pem_root_certs, const char* cipher_suites,
     const char** alpn_protocols, uint16_t num_alpn_protocols,
     tsi_ssl_client_handshaker_factory** factory) {
@@ -3351,7 +3365,7 @@ tsi_result tsi_create_ssl_client_handshaker_factory_with_options(
 #if defined(OPENSSL_IS_BORINGSSL)
     if (options->pem_key_cert_pair != nullptr) {
       grpc_core::Match(
-          options->pem_key_cert_pair->private_key, [](const std::string&) {},
+          options->pem_key_cert_pair->private_key(), [](const std::string&) {},
           [&](const std::shared_ptr<grpc_core::PrivateKeySigner>& key_signer) {
             // The Handshaker Factory will own a shared copy of the reference
             // passed through the options.
@@ -3367,9 +3381,9 @@ tsi_result tsi_create_ssl_client_handshaker_factory_with_options(
       SSL_CTX_set_cert_store(ssl_context, options->root_store->store);
     }
 #endif
-    if (OPENSSL_VERSION_NUMBER < 0x10100000 ||
-        (options->root_store == nullptr &&
-         options->root_cert_info != nullptr)) {
+    if (options->root_cert_info != nullptr &&
+        (OPENSSL_VERSION_NUMBER < 0x10100000 ||
+         options->root_store == nullptr)) {
       Match(
           *options->root_cert_info,
           [&](const std::string& pem_root_certs) {
@@ -3462,25 +3476,25 @@ static tsi_ssl_handshaker_factory_vtable server_handshaker_factory_vtable = {
     tsi_ssl_server_handshaker_factory_destroy};
 
 tsi_result tsi_create_ssl_server_handshaker_factory(
-    tsi_ssl_key_cert_pairs pem_key_cert_pairs,
+    grpc_core::KeyCertPairsOrSelector key_cert_pairs_or_selector,
     const char* pem_client_root_certs, int force_client_auth,
     const char* cipher_suites, const char** alpn_protocols,
     uint16_t num_alpn_protocols, tsi_ssl_server_handshaker_factory** factory) {
   return tsi_create_ssl_server_handshaker_factory_ex(
-      std::move(pem_key_cert_pairs), pem_client_root_certs,
+      std::move(key_cert_pairs_or_selector), pem_client_root_certs,
       force_client_auth ? TSI_REQUEST_AND_REQUIRE_CLIENT_CERTIFICATE_AND_VERIFY
                         : TSI_DONT_REQUEST_CLIENT_CERTIFICATE,
       cipher_suites, alpn_protocols, num_alpn_protocols, factory);
 }
 
 tsi_result tsi_create_ssl_server_handshaker_factory_ex(
-    tsi_ssl_key_cert_pairs pem_key_cert_pairs,
+    grpc_core::KeyCertPairsOrSelector key_cert_pairs_or_selector,
     const char* pem_client_root_certs,
     tsi_client_certificate_request_type client_certificate_request,
     const char* cipher_suites, const char** alpn_protocols,
     uint16_t num_alpn_protocols, tsi_ssl_server_handshaker_factory** factory) {
   tsi_ssl_server_handshaker_options options;
-  options.pem_key_cert_pairs = std::move(pem_key_cert_pairs);
+  options.key_cert_pairs_or_selector = std::move(key_cert_pairs_or_selector);
   if (pem_client_root_certs != nullptr) {
     options.root_cert_info =
         std::make_shared<tsi::RootCertInfo>(pem_client_root_certs);
@@ -3495,7 +3509,7 @@ tsi_result tsi_create_ssl_server_handshaker_factory_ex(
 
 tsi_result tsi_configure_server_ssl_context(
     const tsi_ssl_server_handshaker_options* options,
-    const tsi_ssl_pem_key_cert_pair* pem_key_cert_pair,
+    const grpc_core::PemKeyCertPair* pem_key_cert_pair,
     tsi_ssl_server_handshaker_factory* impl, SslContext& ssl_context) {
 #if OPENSSL_VERSION_NUMBER >= 0x10100000
   ssl_context.ssl_ctx = SSL_CTX_new(TLS_method());
@@ -3521,7 +3535,7 @@ tsi_result tsi_configure_server_ssl_context(
 #if defined(OPENSSL_IS_BORINGSSL)
   if (pem_key_cert_pair != nullptr) {
     grpc_core::Match(
-        pem_key_cert_pair->private_key, [](const std::string&) {},
+        pem_key_cert_pair->private_key(), [](const std::string&) {},
         [&](const std::shared_ptr<grpc_core::PrivateKeySigner>& key_signer) {
           ssl_context.key_signer = key_signer;
         });
@@ -3627,7 +3641,8 @@ tsi_result tsi_configure_server_ssl_context(
 
   if (pem_key_cert_pair != nullptr) {
     result = tsi_ssl_extract_x509_subject_names_from_pem_cert(
-        pem_key_cert_pair->cert_chain.c_str(), &ssl_context.x509_subject_name);
+        pem_key_cert_pair->cert_chain().c_str(),
+        &ssl_context.x509_subject_name);
     if (result != TSI_OK) return result;
   }
   // Always configure the callback because responding to SNI is required for
@@ -3674,8 +3689,8 @@ tsi_result tsi_create_ssl_server_handshaker_factory_with_options(
   impl->base.vtable = &server_handshaker_factory_vtable;
 
   tsi_result result = grpc_core::Match(
-      options->pem_key_cert_pairs,
-      [&](const std::vector<tsi_ssl_pem_key_cert_pair>& pem_key_cert_pairs) {
+      options->key_cert_pairs_or_selector,
+      [&](const grpc_core::PemKeyCertPairList& pem_key_cert_pairs) {
         if (pem_key_cert_pairs.empty()) {
           return TSI_INVALID_ARGUMENT;
         }

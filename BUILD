@@ -19,7 +19,9 @@ load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load(
     "//bazel:grpc_build_system.bzl",
     "grpc_add_well_known_proto_upb_targets",
+    "grpc_cc_grpc_library",
     "grpc_cc_library",
+    "grpc_cc_proto_library",
     "grpc_clang_cl_settings",
     "grpc_filegroup",
     "grpc_generate_one_off_targets",
@@ -634,12 +636,13 @@ grpc_cc_library(
     defines = ["GRPC_NO_XDS"],
     external_deps = [
         "absl/base:core_headers",
+        "absl/functional:any_invocable",
         "absl/log:log",
+        "absl/random",
         "absl/status",
         "absl/status:statusor",
         "absl/strings",
         "absl/time:time",
-        "absl/functional:any_invocable",
     ],
     public_hdrs = GRPC_PUBLIC_HDRS,
     tags = [
@@ -721,12 +724,13 @@ grpc_cc_library(
     }),
     external_deps = [
         "absl/base:core_headers",
+        "absl/functional:any_invocable",
         "absl/log:log",
+        "absl/random",
         "absl/status",
         "absl/status:statusor",
         "absl/strings",
         "absl/time:time",
-        "absl/functional:any_invocable",
     ],
     public_hdrs = GRPC_PUBLIC_HDRS,
     select_deps = [
@@ -777,6 +781,7 @@ grpc_cc_library(
         "//src/core:endpoint_info_handshaker",
         "//src/core:experiments",
         "//src/core:fused_filters",
+        "//src/core:gdch_service_account_credentials",
         "//src/core:grpc_authorization_base",
         "//src/core:grpc_channel_idle_filter",
         "//src/core:grpc_external_account_credentials",
@@ -947,16 +952,14 @@ grpc_cc_library(
         "//src/core:grpc_lb_policy_weighted_target",
         "//src/core:grpc_channel_idle_filter",
         "//src/core:grpc_message_size_filter",
-        "grpc_resolver_dns_ares",
         "grpc_resolver_fake",
-        "//src/core:grpc_resolver_dns_native",
         "//src/core:grpc_resolver_sockaddr",
         "//src/core:grpc_transport_chttp2_client_connector",
         "//src/core:grpc_transport_chttp2_plugin",
         "//src/core:grpc_transport_chttp2_server",
         "//src/core:grpc_transport_inproc",
         "//src/core:grpc_fault_injection_filter",
-        "//src/core:grpc_resolver_dns_plugin",
+        "//src/core:grpc_resolver_dns",
     ],
 )
 
@@ -1579,9 +1582,6 @@ grpc_cc_library(
         "//src/core:lib/iomgr/pollset.cc",
         "//src/core:lib/iomgr/pollset_set_windows.cc",
         "//src/core:lib/iomgr/pollset_windows.cc",
-        "//src/core:lib/iomgr/resolve_address.cc",
-        "//src/core:lib/iomgr/resolve_address_posix.cc",
-        "//src/core:lib/iomgr/resolve_address_windows.cc",
         "//src/core:lib/iomgr/socket_factory_posix.cc",
         "//src/core:lib/iomgr/socket_utils_common_posix.cc",
         "//src/core:lib/iomgr/socket_utils_linux.cc",
@@ -1630,10 +1630,6 @@ grpc_cc_library(
         "//src/core:lib/iomgr/pollset.h",
         "//src/core:lib/iomgr/pollset_set_windows.h",
         "//src/core:lib/iomgr/pollset_windows.h",
-        "//src/core:lib/iomgr/resolve_address.h",
-        "//src/core:lib/iomgr/resolve_address_impl.h",
-        "//src/core:lib/iomgr/resolve_address_posix.h",
-        "//src/core:lib/iomgr/resolve_address_windows.h",
         "//src/core:lib/iomgr/sockaddr.h",
         "//src/core:lib/iomgr/sockaddr_posix.h",
         "//src/core:lib/iomgr/sockaddr_windows.h",
@@ -2920,8 +2916,8 @@ grpc_cc_library(
         "config_vars",
         "grpc++",
         "grpc++_config_proto",
-        "//src/proto/grpc/reflection/v1:reflection_proto",
-        "//src/proto/grpc/reflection/v1alpha:reflection_proto",
+        ":reflection_v1_cc_grpc",
+        ":reflection_v1alpha_cc_grpc",
     ],
     alwayslink = 1,
 )
@@ -3030,10 +3026,10 @@ grpc_cc_library(
         "grpc",
         "grpc++",
         "grpc++_config_proto",
+        ":channelz_cc_grpc",
         "//src/core:channelz_v2tov1_convert",
         "//src/core:experiments",
         "//src/core:notification",
-        "//src/proto/grpc/channelz:channelz_proto",
         "//src/proto/grpc/channelz/v2:service_cc_grpc",
     ],
     alwayslink = 1,
@@ -3340,6 +3336,7 @@ grpc_cc_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
+        "gpr_public_hdrs",
         "grpc++_public_hdrs",
     ],
 )
@@ -4067,6 +4064,7 @@ grpc_cc_library(
         "//src/core:client_channel/retry_filter.cc",
         "//src/core:client_channel/retry_filter_legacy_call_data.cc",
         "//src/core:client_channel/subchannel.cc",
+        "//src/core:client_channel/subchannel_metrics.cc",
         "//src/core:client_channel/subchannel_stream_client.cc",
         "//src/core:client_channel/subchannel_stream_limiter.cc",
     ],
@@ -4083,6 +4081,7 @@ grpc_cc_library(
         "//src/core:client_channel/retry_filter_legacy_call_data.h",
         "//src/core:client_channel/subchannel.h",
         "//src/core:client_channel/subchannel_interface_internal.h",
+        "//src/core:client_channel/subchannel_metrics.h",
         "//src/core:client_channel/subchannel_stream_client.h",
         "//src/core:client_channel/subchannel_stream_limiter.h",
     ],
@@ -4164,6 +4163,7 @@ grpc_cc_library(
         "//src/core:http2_client_transport",
         "//src/core:idle_filter_state",
         "//src/core:init_internally",
+        "//src/core:instrument",
         "//src/core:interception_chain",
         "//src/core:iomgr_fwd",
         "//src/core:json",
@@ -4206,72 +4206,6 @@ grpc_cc_library(
         "//src/core:try_seq",
         "//src/core:unique_type_name",
         "//src/core:useful",
-    ],
-)
-
-grpc_cc_library(
-    name = "grpc_resolver_dns_ares",
-    srcs = [
-        "//src/core:resolver/dns/c_ares/dns_resolver_ares.cc",
-        "//src/core:resolver/dns/c_ares/grpc_ares_ev_driver_posix.cc",
-        "//src/core:resolver/dns/c_ares/grpc_ares_ev_driver_windows.cc",
-        "//src/core:resolver/dns/c_ares/grpc_ares_wrapper.cc",
-        "//src/core:resolver/dns/c_ares/grpc_ares_wrapper_posix.cc",
-        "//src/core:resolver/dns/c_ares/grpc_ares_wrapper_windows.cc",
-    ],
-    hdrs = [
-        "//src/core:resolver/dns/c_ares/dns_resolver_ares.h",
-        "//src/core:resolver/dns/c_ares/grpc_ares_ev_driver.h",
-        "//src/core:resolver/dns/c_ares/grpc_ares_wrapper.h",
-    ],
-    external_deps = [
-        "absl/base:core_headers",
-        "absl/functional:any_invocable",
-        "absl/log",
-        "absl/status",
-        "absl/status:statusor",
-        "absl/strings",
-        "absl/strings:str_format",
-        "cares",
-    ],
-    deps = [
-        "backoff",
-        "channel_arg_names",
-        "config",
-        "config_vars",
-        "debug_location",
-        "endpoint_addresses",
-        "exec_ctx",
-        "gpr",
-        "grpc_grpclb_balancer_addresses",
-        "grpc_resolver",
-        "grpc_service_config_impl",
-        "grpc_trace",
-        "iomgr",
-        "iomgr_timer",
-        "orphanable",
-        "parse_address",
-        "ref_counted_ptr",
-        "sockaddr_utils",
-        "uri",
-        "//src/core:channel_args",
-        "//src/core:closure",
-        "//src/core:error",
-        "//src/core:error_utils",
-        "//src/core:grpc_check",
-        "//src/core:grpc_service_config",
-        "//src/core:grpc_sockaddr",
-        "//src/core:iomgr_fwd",
-        "//src/core:iomgr_port",
-        "//src/core:polling_resolver",
-        "//src/core:pollset_set",
-        "//src/core:resolved_address",
-        "//src/core:service_config_helper",
-        "//src/core:slice",
-        "//src/core:status_helper",
-        "//src/core:sync",
-        "//src/core:time",
-        "//third_party/address_sorting",
     ],
 )
 
@@ -4493,6 +4427,7 @@ grpc_cc_library(
         "//src/core:error",
         "//src/core:json",
         "//src/core:load_file",
+        "//src/core:slice",
         "//src/core:useful",
     ],
 )
@@ -5535,6 +5470,16 @@ grpc_upb_proto_reflection_library(
 )
 
 grpc_upb_proto_library(
+    name = "envoy_extensions_filters_http_ext_proc_upb",
+    deps = ["@envoy_api//envoy/extensions/filters/http/ext_proc/v3:pkg"],
+)
+
+grpc_upb_proto_reflection_library(
+    name = "envoy_extensions_filters_http_ext_proc_upbdefs",
+    deps = ["@envoy_api//envoy/extensions/filters/http/ext_proc/v3:pkg"],
+)
+
+grpc_upb_proto_library(
     name = "envoy_extensions_grpc_service_call_credentials_access_token_upb",
     deps = ["@envoy_api//envoy/extensions/grpc_service/call_credentials/access_token/v3:pkg"],
 )
@@ -5587,6 +5532,11 @@ grpc_upb_proto_library(
 grpc_upb_proto_reflection_library(
     name = "envoy_service_discovery_upbdefs",
     deps = ["@envoy_api//envoy/service/discovery/v3:pkg"],
+)
+
+grpc_upb_proto_library(
+    name = "envoy_service_ext_proc_upb",
+    deps = ["@envoy_api//envoy/service/ext_proc/v3:pkg"],
 )
 
 grpc_upb_proto_library(
@@ -5731,12 +5681,12 @@ grpc_upb_proto_reflection_library(
 
 grpc_upb_proto_library(
     name = "channelz_v1_upb",
-    deps = ["//src/proto/grpc/channelz:channelz_proto_internal"],
+    deps = ["@grpc_proto//:channelz_proto"],
 )
 
 grpc_upb_proto_reflection_library(
     name = "channelz_v1_upbdefs",
-    deps = ["//src/proto/grpc/channelz:channelz_proto_internal"],
+    deps = ["@grpc_proto//:channelz_proto"],
 )
 
 WELL_KNOWN_PROTO_TARGETS = [
@@ -5758,4 +5708,37 @@ filegroup(
         "etc/roots.pem",
     ],
     visibility = ["//visibility:public"],
+)
+
+grpc_cc_proto_library(
+    name = "reflection_v1_cc_proto",
+    deps = ["@grpc_proto//:reflection_proto"],
+)
+
+grpc_cc_proto_library(
+    name = "reflection_v1alpha_cc_proto",
+    deps = ["@grpc_proto//:reflection_proto_deprecated"],
+)
+
+grpc_cc_proto_library(
+    name = "channelz_cc_proto",
+    deps = ["@grpc_proto//:channelz_proto"],
+)
+
+grpc_cc_grpc_library(
+    name = "reflection_v1_cc_grpc",
+    srcs = ["@grpc_proto//:reflection_proto"],
+    deps = [":reflection_v1_cc_proto"],
+)
+
+grpc_cc_grpc_library(
+    name = "reflection_v1alpha_cc_grpc",
+    srcs = ["@grpc_proto//:reflection_proto_deprecated"],
+    deps = [":reflection_v1alpha_cc_proto"],
+)
+
+grpc_cc_grpc_library(
+    name = "channelz_cc_grpc",
+    srcs = ["@grpc_proto//:channelz_proto"],
+    deps = [":channelz_cc_proto"],
 )
